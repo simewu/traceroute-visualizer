@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang='en'>
+
+<head>
+	<meta charset='UTF-8'>
+	<meta name='viewport' content='width=device-width, initial-scale=1.0'>
+	<title>Traceroute Visualization</title>
+	<script src='https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.25.0/cytoscape.min.js'></script>
+	<script src='cola.min.js'></script>
+	<script src='cytoscape-cola.js'></script>
+	<script src='https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js'></script>
+	<link href='https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css' rel='stylesheet'>
+	<style>
+		#cy {
+			background-color: #3C434A;
+			width: 100%;
+			height: 80vh;
+			border: 1px solid lightgray;
+			border-radius: 15px;
+		}
+
+		#selectedPeer {
+			font-size: 1.5em;
+			text-align: center;
+			width: 100%;
+		}
+
+		body {
+			background-color: #1F2326;
+			color: white;
+		}
+	</style>
+</head>
+
+<body class='bg-dark text-white'>
+	<div class='container-fluid'>
+		<div class='row mb-2 pt-3'>
+			<div class='col'>
+				<label>Physics Resolver</label>
+				<select id='physicsResolver' class='custom-select' onchange='updatePhysicsResolver()'>
+					<option value='barnesHut'>Barnes-Hut</option>
+					<option value='repulsion'>Repulsion</option>
+					<option value='hierarchicalRepulsion'>Hierarchical Repulsion</option>
+					<option value='forceAtlas2Based'>Force Atlas 2 Based</option>
+					<option value='none'>None</option>
+				</select>
+			</div>
+			<div class='col'>
+				<label>Change node selection</label>
+				<button id='shuffleButton' class='btn btn-secondary btn-block' onclick='shuffleRows()'>Shuffle</button>
+			</div>
+			<div class='col'>
+				<label>Number of Rows</label>
+				<input type='number' id='numRowsSelector' class='form-control' value='16' min='1' onchange='updateNumRows()'>
+			</div>
+			<div class='col'>
+				<label>Traceroute File</label>
+				<label class='btn btn-primary btn-block'>
+					Select CSV File <input type='file' id='csvFile' accept='.csv' onchange='loadCSVFile()' class='d-none' />
+				</label>
+			</div>
+			<div class='col'>
+				<label>Line Length</label>
+				<input type='range' id='lineLength' class='custom-range' min='1' max='1000' value='200' onchange='updateLineLength(this.value)'>
+			</div>
+			<div class='col'>
+				<label>Node Spacing</label>
+				<input type='range' id='nodeSpacing' class='custom-range' min='0' max='1000' value='10' onchange='updateNodeSpacing(this.value)'>
+			</div>
+		</div>
+		<div id='cy'></div>
+		<div id='selectedPeer'></div>
+        <div id='controls'>
+          <div id='selectedPeer'></div>
+          <button id='switchToCytoscape' class='btn btn-secondary btn-sm' onclick="window.location.href='index.html'" style="position: absolute; bottom: 0; left: 0;">
+            Switch to Vis.js
+          </button>
+        </div>
+	</div>
+	<script>
+		let numBitcoinPeersToVisualize = document.getElementById('numRowsSelector').value || 10;
+		let nodes = [];
+		let edges = [];
+		let connections = {};
+		let lineLength = 75;
+		let nodeSpacing = 40;
+		let physicsSolver = 'barnesHut';
+		let existingNodes = {};
+		let fitLayout = true;
+
+        function adjustNodeSizes(zoomLevel) {
+          let baseNodeSize = 15; // Base size for the nodes
+          let baseEdgeWidth = 2; // Base width for the edges
+
+          // Scale the sizes based on the zoom level
+          let scaledNodeSize = baseNodeSize / zoomLevel;
+          let scaledEdgeWidth = baseEdgeWidth / zoomLevel;
+
+          // Apply the scaled sizes to the nodes
+          cy.nodes().forEach(function (node) {
+            node.style('width', scaledNodeSize + 'px');
+            node.style('height', scaledNodeSize + 'px');
+          });
+
+          // Apply the scaled width to the edges
+          cy.edges().forEach(function (edge) {
+            edge.style('width', scaledEdgeWidth + 'px');
+          });
+        }
+
+
+
+		function loadCSVFile() {
+			let fileInput = document.getElementById('csvFile');
+			let file = fileInput.files[0];
+
+			if (file.name !== 'traceroutes.csv') {
+				document.getElementById('selectedPeer').textContent = 'Please upload a file named traceroutes.csv';
+				return;
+			}
+
+			// Read the file content
+			let reader = new FileReader();
+			reader.onload = function (e) {
+				let csvData = e.target.result;
+				// Store CSV data to local storage
+				localStorage.setItem('traceroutesCSV', csvData);
+				// Parse the CSV data
+				Papa.parse(csvData, {
+					complete: processResults
+				});
+			};
+			reader.readAsText(file);
+		}
+
+		function updatePhysicsResolver() {
+			let physicsValue = document.getElementById('physicsResolver').value;
+
+			switch (physicsValue) {
+				case 'barnesHut':
+					cyLayout.nodeRepulsion = 4096;
+					cyLayout.idealEdgeLength = 64;
+					cyLayout.edgeElasticity = 64;
+					break;
+				case 'repulsion':
+					cyLayout.nodeRepulsion = 8000; // adjust as needed
+					cyLayout.idealEdgeLength = 100; // adjust as needed
+					break;
+				// You can define additional cases here based on your requirements
+				case 'none':
+					cyLayout.nodeRepulsion = 0;
+					cyLayout.idealEdgeLength = 0;
+					cyLayout.edgeElasticity = 0;
+					break;
+				default:
+					break;
+			}
+
+			if (cy) {
+				cy.layout(cyLayout).run();
+			}
+		}
+
+		function updateLineLength(value) {
+			lineLength = parseFloat(value);
+			fitLayout = true; // Enable fitting
+			if (cy) {
+				cy.layout(cyLayout).run(); // Re-run the layout with updated cyLayout
+			}
+		}
+
+		function updateNodeSpacing(value) {
+			nodeSpacing = parseInt(value);
+			fitLayout = true; // Enable fitting
+			if (cy) {
+				cy.layout(cyLayout).run(); // Re-run the layout with updated cyLayout
+			}
+		}
+
+		// Handle updating the number of rows to visualize:
+		function updateNumRows() {
+			numBitcoinPeersToVisualize = document.getElementById('numRowsSelector').value;
+			if (document.getElementById('csvFile').files.length > 0) {
+				loadCSVFile();
+			}
+		}
+
+		function shuffleArray(array) {
+			for (let i = array.length - 1; i > 0; i--) {
+				const j = Math.floor(Math.random() * (i + 1));
+				[array[i], array[j]] = [array[j], array[i]];
+			}
+			return array;
+		}
+
+		function shuffleRows() {
+			if (document.getElementById('csvFile').files.length > 0) {
+				loadCSVFile();
+			}
+		}
+
+		function processResults(results) {
+			let allRtts = [];
+
+			results.data.slice(1).forEach((row) => {
+				row.slice(3).forEach((cell) => {
+					if (cell !== '' && cell !== ''*'') {
+						let [, rtt] = cell.split(',');
+						allRtts.push(parseFloat(rtt));
+					}
+				});
+			});
+
+			let minRtt = Math.min(...allRtts);
+			let maxRtt = Math.max(...allRtts);
+			results.data.shift(); // remove header
+
+			let shuffledRows = shuffleArray(results.data.slice(1)); // Remove header and shuffle
+			shuffledRows.slice(0, numBitcoinPeersToVisualize).forEach((row, rowIndex) => {
+				processRow(row, rowIndex, maxRtt, minRtt);
+			});
+
+			cy.layout({ name: 'cose' }).run();
+			buildGraph()
+			nodes = [];
+			edges = [];
+		}
+
+		function processRow(row, rowIndex, maxRtt, minRtt) {
+			let previousNode = null;
+			let isFinalNode = row[2] === '1';
+
+			row.slice(3).forEach((cell, columnIndex) => {
+				if (cell !== '' && cell !== ''*'') {
+					let [address, rtt] = cell.split(',');
+					processCell(address, rtt, previousNode, isFinalNode, row, rowIndex, columnIndex, maxRtt, minRtt);
+					previousNode = getNodeID(address, rowIndex, columnIndex);
+				}
+			});
+		}
+
+		function processCell(address, rtt, previousNode, isFinalNode, row, rowIndex, columnIndex, maxRtt, minRtt) {
+			let nodeName = address.match(/\(([^)]+)\)/);
+			if (nodeName) {
+				nodeName = address.replace(nodeName[0], '') + ' ' + nodeName[0];
+			} else {
+				nodeName = address.replace(/\"/g, '');
+			}
+
+			let nodeId = getNodeID(address, rowIndex, columnIndex);
+			let nodeColor = getNodeColor(nodeName, isFinalNode, row, rowIndex, columnIndex); // Move this outside the condition
+            let edgeColor = nodeColor;
+            let nodeSize = getNodeSize(columnIndex, nodeColor);
+
+			if (!existingNodes[nodeId]) {
+				nodes.push({ data: { id: nodeId, label: nodeName, color: nodeColor, size: nodeSize } });
+				existingNodes[nodeId] = true; // Mark this ID as used
+			}
+
+			if (previousNode) {
+                let connectionKey = previousNode + '-' + nodeId;
+                if (!connections[connectionKey]) {
+                    edges.push({ data: { source: previousNode, target: nodeId, color: edgeColor, width: 5 } });
+                    connections[connectionKey] = true;
+                }
+            }
+
+		}
+
+		function getNodeID(address, rowIndex, columnIndex) {
+			let nodeName = address.replace(/\"/g, '');
+			if (nodeName === '*') {
+				return nodeName + rowIndex + columnIndex;
+			} else {
+				let ipMatch = nodeName.match(/\(([^)]+)\)/);
+				return ipMatch ? ipMatch[1] : nodeName;
+			}
+		}
+
+		function getNodeColor(nodeName, isFinalNode, row, rowIndex, columnIndex) {
+			if (nodeName === '*') {
+				return '#111';
+			}
+			if (columnIndex === 0) {
+				return 'yellow';
+			}
+			if (isFinalNode && columnIndex === row.slice(3).length - 1) { // 'row' is now accessible
+				return '#FFF';
+			}
+			return '#7EA1FF';
+		}
+
+		function getNodeSize(columnIndex, color) {
+            if (color === '#FFF') {
+                return 20;
+            }
+            if (color === '#111') {
+                return 5;
+            }
+            if (columnIndex === 0) {
+                return 10;
+            }
+            return 10;
+        }
+
+		function buildGraph() {
+			cy.elements().remove(); // Remove existing elements
+			existingNodes = {}; // Clear existing nodes tracking
+			connections = {}; // Clear existing connections tracking
+			nodes.forEach(node => cy.add({ group: 'nodes', data: node.data }));
+			edges.forEach(edge => cy.add({ group: 'edges', data: edge.data }));
+			cy.layout(cyLayout).run();
+		}
+
+		function resumeLayout() {
+			cy.layout(cyLayout).run();
+		}
+
+		function loadCachedCSV() {
+			let csvData = localStorage.getItem('traceroutesCSV');
+			if (csvData) {
+				Papa.parse(csvData, {
+					complete: processResults
+				});
+			} else {
+				console.log('Preloading sample data...');
+				csvData = 'Bitcoin Node IP,Number of Hops,Reached Destination,"Hop 1 (Address, RTT) (milliseconds)","Hop 2 (Address, RTT) (milliseconds)","Hop 3 (Address, RTT) (milliseconds)","Hop 4 (Address, RTT) (milliseconds)","Hop 5 (Address, RTT) (milliseconds)","Hop 6 (Address, RTT) (milliseconds)","Hop 7 (Address, RTT) (milliseconds)","Hop 8 (Address, RTT) (milliseconds)","Hop 9 (Address, RTT) (milliseconds)","Hop 10 (Address, RTT) (milliseconds)","Hop 11 (Address, RTT) (milliseconds)","Hop 12 (Address, RTT) (milliseconds)","Hop 13 (Address, RTT) (milliseconds)","Hop 14 (Address, RTT) (milliseconds)","Hop 15 (Address, RTT) (milliseconds)","Hop 16 (Address, RTT) (milliseconds)","Hop 17 (Address, RTT) (milliseconds)","Hop 18 (Address, RTT) (milliseconds)","Hop 19 (Address, RTT) (milliseconds)","Hop 20 (Address, RTT) (milliseconds)","Hop 21 (Address, RTT) (milliseconds)","Hop 22 (Address, RTT) (milliseconds)","Hop 23 (Address, RTT) (milliseconds)","Hop 24 (Address, RTT) (milliseconds)","Hop 25 (Address, RTT) (milliseconds)","Hop 26 (Address, RTT) (milliseconds)","Hop 27 (Address, RTT) (milliseconds)"\n34.101.129.24,7,1,"cybrcat1.uccs.edu (128.198.74.1),1.9005","10.10.102.1 (10.10.102.1),1.0685","10.10.101.1 (10.10.101.1),5.0630","uccs-bison-south-commodity-at-frgp.uccs.edu (128.198.254.2),6.5410","core-910-ptr.frgp.net (192.43.217.170),9.5955","72.14.194.239 (72.14.194.239),7.2090","24.129.101.34.bc.googleusercontent.com (34.101.129.24),194.6605"\n34.101.129.24,7,1,"cybrcat1.uccs.edu (128.198.74.1),2.1070","10.10.102.1 (10.10.102.1),1.0520","10.10.101.1 (10.10.101.1),5.1815","uccs-bison-south-commodity-at-frgp.uccs.edu (128.198.254.2),6.7095","core-910-ptr.frgp.net (192.43.217.170),9.2375","72.14.194.239 (72.14.194.239),7.1335","24.129.101.34.bc.googleusercontent.com (34.101.129.24),195.9185"\n91.199.41.45,15,1,"cybrcat1.uccs.edu (128.198.74.1),1.3210","10.10.102.1 (10.10.102.1),0.7735","10.10.101.1 (10.10.101.1),6.0450","uccs-link-at-frgp.uccs.edu (128.198.254.2),7.1850","core-1850-ptr.frgp.net (192.43.217.194),6.9360","hundredge-0-0-0-24.3530.core1.seat.net.internet2.edu (198.71.47.255),34.5805","fourhundredge-0-0-0-49.4079.agg1.seat.net.internet2.edu (163.253.1.163),35.3160","ge3-0.cr02.sea01.pccwbtn.net (206.81.80.13),41.6310","Bundle-Ether42.br03.mrs01.pccwbtn.net (63.223.38.78),152.9320","63-222-61-238.static.pccwglobal.net (63.222.61.238),192.7850","be14-icr1.lat.cyta-ip.net (195.14.136.233),192.7815","be16-iag1.lat.cyta-ip.net (195.14.136.235),191.7960","et-3-0-5.bus3.lat.bng.cyta-ip.net (195.14.136.148),192.9240","buscust24-179.static.cytanet.com.cy (46.199.74.179),194.1170","91.199.41.45 (91.199.41.45),191.7730"\n91.199.41.45,15,1,"cybrcat1.uccs.edu (128.198.74.1),1.3570","10.10.102.1 (10.10.102.1),0.6960","10.10.101.1 (10.10.101.1),6.0500","uccs-link-at-frgp.uccs.edu (128.198.254.2),7.2010","core-1850-ptr.frgp.net (192.43.217.194),7.0975","hundredge-0-0-0-24.3530.core1.seat.net.internet2.edu (198.71.47.255),34.6065","fourhundredge-0-0-0-49.4079.agg1.seat.net.internet2.edu (163.253.1.163),35.3720","ge3-0.cr02.sea01.pccwbtn.net (206.81.80.13),41.6545","Bundle-Ether42.br03.mrs01.pccwbtn.net (63.223.38.78),153.0040","63-222-61-238.static.pccwglobal.net (63.222.61.238),192.7390","be14-icr1.lat.cyta-ip.net (195.14.136.233),192.7045","be16-iag1.lat.cyta-ip.net (195.14.136.235),191.8265","et-3-0-5.bus3.lat.bng.cyta-ip.net (195.14.136.148),192.9300","buscust24-179.static.cytanet.com.cy (46.199.74.179),194.1610","91.199.41.45 (91.199.41.45),191.9105"\n135.181.109.196,19,1,"cybrcat1.uccs.edu (128.198.74.1),3.2345","10.10.102.1 (10.10.102.1),0.6045","10.10.101.1 (10.10.101.1),6.6255","uccs-bison-south-commodity-at-frgp.uccs.edu (128.198.254.2),9.3345","core-910-ptr.frgp.net (192.43.217.170),6.6380",*,*,"kanc-b2-link.ip.twelve99.net (62.115.138.75),17.8355","chi-b23-link.ip.twelve99.net (213.155.130.176),30.0940","nyk-bb2-link.ip.twelve99.net (62.115.137.58),45.5575",*,"s-bb2-link.ip.twelve99.net (62.115.139.172),130.5575","hls-b3-link.ip.twelve99.net (62.115.122.35),136.3950","hetzner-ic-365572.ip.twelve99-cust.net (62.115.52.255),148.1105","core31.hel1.hetzner.com (213.239.203.205),148.0160","spine2.cloud1.hel1.hetzner.com (88.198.242.250),148.5140",*,"22609.your-cloud.host (65.108.116.54),148.0440","static.196.109.181.135.clients.your-server.de (135.181.109.196),148.2120"\n135.181.109.196,19,1,"cybrcat1.uccs.edu (128.198.74.1),3.1840","10.10.102.1 (10.10.102.1),0.6965","10.10.101.1 (10.10.101.1),4.6240","uccs-link-at-frgp.uccs.edu (128.198.254.2),6.7675","core-910-ptr.frgp.net (192.43.217.170),6.7560",*,*,"kanc-b2-link.ip.twelve99.net (62.115.138.75),18.0770","chi-b23-link.ip.twelve99.net (213.155.130.176),29.7850","nyk-bb2-link.ip.twelve99.net (62.115.137.58),45.7295",*,"s-bb2-link.ip.twelve99.net (62.115.139.172),130.5335","hls-b3-link.ip.twelve99.net (62.115.122.35),136.4000","hetzner-ic-365572.ip.twelve99-cust.net (62.115.52.255),148.4710","core31.hel1.hetzner.com (213.239.203.205),150.7110","spine2.cloud1.hel1.hetzner.com (88.198.242.250),148.6105",*,"22609.your-cloud.host (65.108.116.54),147.5615","static.196.109.181.135.clients.your-server.de (135.181.109.196),147.7995"\n73.5.87.36,18,0,"cybrcat1.uccs.edu (128.198.74.1),2.6120","10.10.102.1 (10.10.102.1),1.2075","10.10.101.1 (10.10.101.1),5.1490","uccs-bison-south-commodity-at-frgp.uccs.edu (128.198.254.2),6.4635","core-910-ptr.frgp.net (192.43.217.170),9.4520",*,"be-201-pe11.910fifteenth.co.ibone.comcast.net (50.208.235.197),7.2375","be-3411-cs04.champa.co.ibone.comcast.net (96.110.33.125),7.0550","be-1414-cr14.champa.co.ibone.comcast.net (96.110.37.254),7.2825","be-301-cr14.1601milehigh.co.ibone.comcast.net (96.110.39.2),7.3625","be-1214-cs02.1601milehigh.co.ibone.comcast.net (96.110.39.117),7.3840","be-1212-cr12.1601milehigh.co.ibone.comcast.net (96.110.39.86),7.2990","be-304-cr12.dallas.tx.ibone.comcast.net (96.110.38.110),24.4425","be-1312-cs03.dallas.tx.ibone.comcast.net (68.86.166.117),24.6140","68.86.95.122 (68.86.95.122),33.4055","162.151.118.170 (162.151.118.170),39.9275","68.86.241.202 (68.86.241.202),39.7495","96.110.133.90 (96.110.133.90),40.0110"\n73.5.87.36,18,0,"cybrcat1.uccs.edu (128.198.74.1),1.4450","10.10.102.1 (10.10.102.1),1.2935","10.10.101.1 (10.10.101.1),4.8460","uccs-bison-south-commodity-at-frgp.uccs.edu (128.198.254.2),6.6755","core-910-ptr.frgp.net (192.43.217.170),9.4040","den-b3-link.ip.twelve99.net (62.115.63.78),7.6300","be-201-pe11.910fifteenth.co.ibone.comcast.net (50.208.235.197),7.1510","be-3411-cs04.champa.co.ibone.comcast.net (96.110.33.125),7.0055","be-1414-cr14.champa.co.ibone.comcast.net (96.110.37.254),7.2225","be-301-cr14.1601milehigh.co.ibone.comcast.net (96.110.39.2),7.3345","be-1214-cs02.1601milehigh.co.ibone.comcast.net (96.110.39.117),7.3215","be-1212-cr12.1601milehigh.co.ibone.comcast.net (96.110.39.86),7.3385","be-304-cr12.dallas.tx.ibone.comcast.net (96.110.38.110),24.4715","be-1312-cs03.dallas.tx.ibone.comcast.net (68.86.166.117),24.5790","68.86.95.122 (68.86.95.122),33.3805","162.151.118.170 (162.151.118.170),39.8630","68.86.241.202 (68.86.241.202),39.7950","96.110.133.90 (96.110.133.90),39.9540"\n140.238.220.99,16,0,"cybrcat1.uccs.edu (128.198.74.1),2.3590","10.10.102.1 (10.10.102.1),0.8995","10.10.101.1 (10.10.101.1),5.3435","uccs-bison-south-commodity-at-frgp.uccs.edu (128.198.254.2),6.6750","core-910-ptr.frgp.net (192.43.217.170),9.2745","den-b3-link.ip.twelve99.net (62.115.63.78),7.3170",*,"kanc-b2-link.ip.twelve99.net (62.115.138.75),20.1480","chi-b23-link.ip.twelve99.net (62.115.125.152),29.7150","nyk-bb1-link.ip.twelve99.net (80.91.246.163),46.0975",*,"prs-bb2-link.ip.twelve99.net (62.115.133.239),122.1675","adm-bb4-link.ip.twelve99.net (62.115.137.4),140.2535","ffm-bb2-link.ip.twelve99.net (62.115.122.201),137.0520","zch-b1-link.ip.twelve99.net (62.115.138.47),140.0145","140.91.210.34 (140.91.210.34),139.7785"\n140.238.220.99,16,0,"cybrcat1.uccs.edu (128.198.74.1),2.3455","10.10.102.1 (10.10.102.1),1.2135","10.10.101.1 (10.10.101.1),5.1080","uccs-bison-south-commodity-at-frgp.uccs.edu (128.198.254.2),6.6425","core-910-ptr.frgp.net (192.43.217.170),9.3810","den-b3-link.ip.twelve99.net (62.115.63.78),7.3165",*,"kanc-b2-link.ip.twelve99.net (62.115.138.75),17.6485","chi-b23-link.ip.twelve99.net (62.115.125.152),29.8915","nyk-bb1-link.ip.twelve99.net (80.91.246.163),46.2360",*,"prs-bb2-link.ip.twelve99.net (62.115.133.239),122.2035","adm-bb4-link.ip.twelve99.net (62.115.137.4),140.2355","ffm-bb2-link.ip.twelve99.net (62.115.122.201),136.6470",*,"140.91.210.34 (140.91.210.34),139.7000"\n98.1.3.139,15,0,"cybrcat1.uccs.edu (128.198.74.1),1.4370","10.10.102.1 (10.10.102.1),0.7865","10.10.101.1 (10.10.101.1),6.1225","uccs-bison-south-commodity-at-frgp.uccs.edu (128.198.254.2),7.0690",*,*,*,"port-channel13.core4.dal1.he.net (184.104.196.170),39.3710","twc-7843-bb-as7843.port-channel9.core4.dal1.he.net (184.105.53.22),38.7960","lag-302.dllstx976iw-bcr00.netops.charter.com (209.18.43.76),40.1035","lag-401.bcr01nsvntnjy.netops.charter.com (107.14.19.192),42.6420","lag-502.chcgildt87w-bcr00.netops.charter.com (66.109.6.118),41.3695","lag-2.rcr01rochnyei.netops.charter.com (66.109.6.73),77.8815","lag-1.wbstnyaj02h.netops.charter.com (24.58.52.21),183.6435","agg2.wbstnyaj03m.nyroc.rr.com (24.58.232.110),63.7675"\n98.1.3.139,15,0,"cybrcat1.uccs.edu (128.198.74.1),1.3915","10.10.102.1 (10.10.102.1),0.7630","10.10.101.1 (10.10.101.1),5.9395","uccs-bison-south-commodity-at-frgp.uccs.edu (128.198.254.2),7.3770",*,*,"port-channel19.core3.dal1.he.net (184.105.213.129),25.5960","port-channel13.core4.dal1.he.net (184.104.196.170),35.7160","twc-7843-bb-as7843.port-channel9.core4.dal1.he.net (184.105.53.22),46.3780","lag-302.dllstx976iw-bcr00.netops.charter.com (209.18.43.76),39.8455","lag-401.bcr01nsvntnjy.netops.charter.com (107.14.19.192),46.7470","lag-502.chcgildt87w-bcr00.netops.charter.com (66.109.6.118),40.5720","lag-2.rcr01rochnyei.netops.charter.com (66.109.6.73),53.3060","lag-1.wbstnyaj02h.netops.charter.com (24.58.52.21),66.8800","agg2.wbstnyaj03m.nyroc.rr.com (24.58.232.110),63.6990"\n176.9.47.132,17,1,"cybrcat1.uccs.edu (128.198.74.1),1.4700","10.10.102.1 (10.10.102.1),0.6905","10.10.101.1 (10.10.101.1),4.5825","uccs-link-at-frgp.uccs.edu (128.198.254.2),6.3590","core-910-ptr.frgp.net (192.43.217.170),8.3535","den-b3-link.ip.twelve99.net (62.115.63.78),6.9480",*,"kanc-b2-link.ip.twelve99.net (62.115.138.75),17.4880","chi-b23-link.ip.twelve99.net (213.155.130.176),29.6115","nyk-bb1-link.ip.twelve99.net (80.91.246.163),46.0520",*,*,"nug-b1-link.ip.twelve99.net (62.115.113.175),142.7910","hetzner-ic-340780.ip.twelve99-cust.net (213.248.70.1),141.9350","core24.fsn1.hetzner.com (213.239.252.234),146.2185","ex9k1.dc6.fsn1.hetzner.com (213.239.229.94),145.5425","static.132.47.9.176.clients.your-server.de (176.9.47.132),145.9960"\n176.9.47.132,17,1,"cybrcat1.uccs.edu (128.198.74.1),1.7305","10.10.102.1 (10.10.102.1),0.6625","10.10.101.1 (10.10.101.1),4.6325","uccs-bison-south-commodity-at-frgp.uccs.edu (128.198.254.2),6.2090","core-910-ptr.frgp.net (192.43.217.170),8.4495","den-b3-link.ip.twelve99.net (62.115.63.78),6.8270",*,"kanc-b2-link.ip.twelve99.net (62.115.138.75),17.0955","chi-b23-link.ip.twelve99.net (213.155.130.176),29.4875","nyk-bb1-link.ip.twelve99.net (80.91.246.163),46.2315",*,"hbg-bb2-link.ip.twelve99.net (62.115.122.160),130.1330","nug-b1-link.ip.twelve99.net (62.115.113.175),142.4800","hetzner-ic-340780.ip.twelve99-cust.net (213.248.70.1),141.8045","core24.fsn1.hetzner.com (213.239.252.234),151.3955","ex9k1.dc6.fsn1.hetzner.com (213.239.229.94),145.4175","static.132.47.9.176.clients.your-server.de (176.9.47.132),146.1145"\n143.110.182.24,17,1,"cybrcat1.uccs.edu (128.198.74.1),1.6940","10.10.102.1 (10.10.102.1),0.6795","10.10.101.1 (10.10.101.1),5.7655","uccs-link-at-frgp.uccs.edu (128.198.254.2),7.3110","core-910-ptr.frgp.net (192.43.217.170),13.1030","den-b3-link.ip.twelve99.net (62.115.63.78),7.0810","sjo-b23-link.ip.twelve99.net (62.115.132.216),30.8485","lax-b23-link.ip.twelve99.net (62.115.116.41),37.0460","lax-b22-link.ip.twelve99.net (62.115.143.39),37.3140","bhartiairtel-ic-358982.ip.twelve99-cust.net (62.115.47.213),36.8125","116.119.106.32 (116.119.106.32),245.9460","182.79.27.226 (182.79.27.226),244.5080","143.244.225.127 (143.244.225.127),244.6345",*,*,*,"143.110.182.24 (143.110.182.24),246.4000"';
+				localStorage.setItem('traceroutesCSV', csvData);
+				Papa.parse(csvData, {
+					complete: processResults
+				});
+			}
+		}
+
+		//cytoscape.use(cola);
+
+		let cyLayout = {
+			name: 'cola',
+			fit: () => fitLayout,
+			padding: 30,
+			nodeSpacing: nodeSpacing,
+			edgeLength: (edge) => lineLength,
+			boundingBox: { x1: 0, y1: 0, w: window.innerWidth, h: window.innerHeight }, // Constrain to the window size
+			animate: true,
+			animationDuration: 500,
+			animateFilter: (node, i) => i % 3 === 0,
+			ready: function() {},
+			stop: function() {}
+		};
+
+		let cy = cytoscape({
+			container: document.getElementById('cy'),
+			layout: cyLayout,
+			style: [
+				{
+					selector: 'node',
+					style: {
+                        //'label': 'data(label)',
+                        'label': '',
+						'background-color': 'data(color)',
+                        'width': 'data(size)',
+                        'height': 'data(size)',
+						'font-size': '20px',
+                        'color': '#ffffff',
+					}
+				},
+				{
+					selector: 'edge',
+                    style: {
+                        'line-color': 'data(color)', // Use the data(color) attribute
+                        'width': 'data(width)',
+                    }
+				}
+			],
+		});
+
+        cy.on('dragstart', 'node', function(evt) {
+          cyLayout.stop();
+        });
+
+        cy.on('drag', 'node', function(evt) {
+          let selectedPeer = evt.target.data('label');
+          document.getElementById('selectedPeer').textContent = selectedPeer;
+        });
+
+        cy.on('dragfree', 'node', function(evt) {
+          cy.layout(cyLayout).run();
+        });
+
+        cy.on('tap', 'node', function(evt) {
+          let selectedPeer = evt.target.data('label');
+          document.getElementById('selectedPeer').textContent = selectedPeer;
+        });
+
+        cy.on('zoom', function(evt) {
+          adjustNodeSizes(cy.zoom());
+        });
+
+
+		window.addEventListener('resize', () => {
+			cyLayout.boundingBox.w = window.innerWidth;
+			cyLayout.boundingBox.h = window.innerHeight;
+			cy.layout(cyLayout).run();
+		});
+		loadCachedCSV();
+	</script>
+</body>
+
+</html>
