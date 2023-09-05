@@ -19,6 +19,31 @@
 			border-radius: 15px;
 		}
 
+    #legend {
+        position: absolute;
+        z-index: 10;
+        right: 0;
+        margin-top: 10px;
+        margin-right: 30px;
+        color: #F8F6EB;
+        pointer-events: none;
+    }
+
+    #legend table {
+        border-collapse: collapse;
+        color: white;
+    }
+
+    #legend td {
+        padding: 0 5px; /* Adjust as needed */
+    }
+
+    #controls {
+        position: fixed;
+        bottom: 15px;
+        width: 100%;
+    }
+
 		#selectedPeer {
 			font-size: 1.5em;
 			text-align: center;
@@ -68,6 +93,34 @@
 				<input type='range' id='nodeSpacing' class='custom-range' min='0' max='1000' value='10' onchange='updateNodeSpacing(this.value)'>
 			</div>
 		</div>
+    <!-- Legend -->
+    <div id='legend'>
+        <table>
+            <tr>
+                <td colspan='3' style='color:#FAF5AE'><strong>Legend:</strong></td>
+            </tr>
+            <tr>
+                <td>Yellow</td>
+                <td>=</td>
+                <td>Our logger</td>
+            </tr>
+            <tr>
+                <td>Blue</td>
+                <td>=</td>
+                <td>Relay node</td>
+            </tr>
+            <tr>
+                <td>Black</td>
+                <td>=</td>
+                <td>Unknown node</td>
+            </tr>
+            <tr>
+                <td>White</td>
+                <td>=</td>
+                <td>Bitcoin Peer</td>
+            </tr>
+        </table>
+    </div>
 		<div id='cy'></div>
 		<div id='selectedPeer'></div>
         <div id='controls'>
